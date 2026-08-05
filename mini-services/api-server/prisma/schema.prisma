@@ -1,0 +1,80 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  permissions RolePermission[]
+  users       PortalUser[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id            Int             @id @default(autoincrement())
+  name          String          @unique
+  description   String?
+  roles         RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  role_id       Int
+  permission_id Int
+  role          Role       @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  permission    Permission @relation(fields: [permission_id], references: [id], onDelete: Cascade)
+
+  @@id([role_id, permission_id])
+  @@map("role_permissions")
+}
+
+model PortalUser {
+  id            Int        @id @default(autoincrement())
+  username      String     @unique
+  full_name     String
+  email         String
+  password_hash String
+  role_id       Int
+  role          Role       @relation(fields: [role_id], references: [id])
+  location      String?
+  phone         String?
+  status        String     @default("active")
+  failed_logins Int        @default(0)
+  locked_until  DateTime?
+  created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+
+  @@map("users")
+}
+
+model AuditLog {
+  id              Int      @id @default(autoincrement())
+  agent_username  String
+  agent_ip        String?
+  action          String
+  target_username String?
+  description     String?
+  result          String
+  created_at      DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+model ADOperation {
+  id             Int      @id @default(autoincrement())
+  operation_type String
+  target_user    String
+  requested_by   String
+  approved_by    String?
+  status         String   @default("pending")
+  created_at     DateTime @default(now())
+
+  @@map("ad_operations")
+}
