@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { LoginPage } from '@/components/pages/login-page';
 import { DashboardPage } from '@/components/pages/dashboard-page';
 import { UserSearchPage } from '@/components/pages/user-search-page';
+import { CreateUserPage } from '@/components/pages/create-user-page';
 import { AgentManagementPage } from '@/components/pages/agent-management-page';
 import { AuditPage } from '@/components/pages/audit-page';
 import { AppShell, type Page } from '@/components/layout/app-shell';
@@ -35,6 +36,7 @@ export default function Home() {
     switch (currentPage) {
       case 'dashboard': return <DashboardPage />;
       case 'users': return <UserSearchPage />;
+      case 'create-user': return <CreateUserPage />;
       case 'agents': return <AgentManagementPage />;
       case 'audit': return <AuditPage />;
       case 'settings': return (

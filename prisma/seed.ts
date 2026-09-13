@@ -42,9 +42,26 @@ async function seed() {
   }
 
   // Create admin user
+  const superAdminRole = await prisma.role.findUnique({ where: { name: 'Superadmin' } });
   const adminRole = await prisma.role.findUnique({ where: { name: 'Administrator' } });
   const supervisorRole = await prisma.role.findUnique({ where: { name: 'Supervisor' } });
   const prAgentRole = await prisma.role.findUnique({ where: { name: 'Password Reset Agent' } });
+
+  const superAdminHash = await bcrypt.hash('SuperAdmin@123', 12);
+  await prisma.portalUser.upsert({
+    where: { username: 'superadmin' },
+    update: {},
+    create: {
+      username: 'superadmin',
+      full_name: 'Super Administrator',
+      email: 'superadmin@company.local',
+      password_hash: superAdminHash,
+      role_id: superAdminRole!.id,
+      location: 'Head Office',
+      phone: '+968-90000000',
+      status: 'active',
+    },
+  });
 
   const adminHash = await bcrypt.hash('Admin@123', 12);
   await prisma.portalUser.upsert({
@@ -160,6 +177,7 @@ async function seed() {
   console.log('Seed completed successfully!');
   console.log('---');
   console.log('Login credentials:');
+  console.log('  Superadmin: superadmin / SuperAdmin@123');
   console.log('  Admin:     admin / Admin@123');
   console.log('  Supervisor: supervisor1 / Super@123');
   console.log('  Agent:     agent1 / Agent1@123');

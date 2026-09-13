@@ -12,11 +12,28 @@ export const PERMISSIONS = {
   create_agents: 'create_agents',
   manage_roles: 'manage_roles',
   view_own_audit_logs: 'view_own_audit_logs',
+  create_ad_accounts: 'create_ad_accounts',
 } as const;
 
 export type PermissionName = typeof PERMISSIONS[keyof typeof PERMISSIONS];
 
 export const ROLE_PERMISSIONS: Record<string, PermissionName[]> = {
+  Superadmin: [
+    PERMISSIONS.search_users,
+    PERMISSIONS.view_user_details,
+    PERMISSIONS.reset_passwords,
+    PERMISSIONS.unlock_accounts,
+    PERMISSIONS.enable_ad_accounts,
+    PERMISSIONS.disable_ad_accounts,
+    PERMISSIONS.force_password_change,
+    PERMISSIONS.view_reports,
+    PERMISSIONS.view_all_audit_logs,
+    PERMISSIONS.export_audit_logs,
+    PERMISSIONS.create_agents,
+    PERMISSIONS.manage_roles,
+    PERMISSIONS.view_own_audit_logs,
+    PERMISSIONS.create_ad_accounts,
+  ],
   Administrator: [
     PERMISSIONS.search_users,
     PERMISSIONS.view_user_details,

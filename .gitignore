@@ -52,3 +52,15 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# local runtime data & artifacts (never commit)
+/db/
+/prisma/db/
+/nssm.exe
+/tool-results/
+/.zscripts/
+t-*.ts
+t-*.cjs
+ad-login-flag-test.mjs
+check-ad-state.mjs
+verify-user.mjs

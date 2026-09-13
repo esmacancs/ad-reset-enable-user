@@ -224,6 +224,32 @@ export interface ADUser {
   description: string | null;
 }
 
+// --- New-user provisioning input ---
+export interface NewADUserInput {
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  sAMAccountName: string;
+  userPrincipalName: string;
+  mail: string;
+  ou: string; // DN of the container/OU where the user will be created
+  department?: string;
+  title?: string;
+  description?: string;
+  office?: string;
+  phone?: string;
+  employeeId?: string;
+  password: string;
+  mustChangePassword: boolean; // pwdLastSet = 0 (force change at next logon)
+  enabled: boolean;            // false -> created with ACCOUNTDISABLE flag
+}
+
+export interface ADOUEntry {
+  name: string;
+  ou: string;
+  dn: string;
+}
+
 // --- Parse AD attributes into our ADUser interface ---
 function parseADUser(dn: any, attrs: ldap.SearchEntryAttributes): ADUser {
   const map = attrsToMap(attrs);
@@ -650,6 +676,188 @@ async function modifyUserAccountControl(username: string, flag: number, set: boo
       rawModify(client, user.dn, [
         new ldap.Change({ operation: 'replace', modification: new ldap.Attribute({ type: 'userAccountControl', values: [String(newUAC)] }) }),
       ]).then(resolve, (err: any) => reject(new Error(`UAC modify failed: ${err.message}`)));
+    });
+
+    _connected = true;
+    _lastCheck = Date.now();
+  } catch (err: any) {
+    _connected = false;
+    _lastError = err.message;
+    throw err;
+  } finally {
+    await unbind(client);
+  }
+}
+
+/** Escape a single DN component value (e.g. a CN with commas in an Arabic full name) */
+function escapeDNComponent(value: string): string {
+  const trimmed = value.trim();
+  return trimmed
+    .replace(/\\/g, '\\\\')
+    .replace(/,/g, '\\,')
+    .replace(/\+/g, '\\+')
+    .replace(/"/g, '\\"')
+    .replace(/'/g, "\\'")
+    .replace(/</g, '\\<')
+    .replace(/>/g, '\\>')
+    .replace(/;/g, '\\;')
+    .replace(/=/g, '\\=')
+    .replace(/\n/g, '');
+}
+
+/** Check whether a sAMAccountName already exists in AD (any objectClass=user) */
+function userExists(client: ldap.Client, cfg: ADConfig, username: string): Promise<boolean> {
+  const escaped = username.replace(/[()*\\]/g, '\\$&');
+  const filter = `(&(objectClass=user)(!(objectClass=computer))(sAMAccountName=${escaped}))`;
+
+  return new Promise((resolve, reject) => {
+    client.search(cfg.searchBase, {
+      filter,
+      scope: 'sub',
+      sizeLimit: 1,
+      attributes: ['sAMAccountName'],
+    }, (err, res) => {
+      if (err) return reject(err);
+      res.on('searchEntry', () => resolve(true));
+      res.on('end', (result) => {
+        if (result?.status === 0) resolve(false);
+        else reject(new Error(`LDAP search failed: status ${result?.status}`));
+      });
+      res.on('error', reject);
+    });
+  });
+}
+
+/** List Organizational Units (containers) where users can be created */
+export async function listContainerOUs(): Promise<ADOUEntry[]> {
+  const cfg = getADConfig();
+  const client = await createClient();
+  try {
+    await bind(client);
+
+    const ous: ADOUEntry[] = [];
+
+    await new Promise<void>((resolve, reject) => {
+      client.search(cfg.baseDN, {
+        filter: '(objectClass=organizationalUnit)',
+        scope: 'sub',
+        sizeLimit: 500,
+        attributes: ['ou', 'name', 'distinguishedName'],
+      }, (err, res) => {
+        if (err) return reject(err);
+        res.on('searchEntry', (entry) => {
+          const m = attrsToMap(entry.attributes);
+          const dn = getFirstValue(m.distinguishedName) || dnToString(entry.dn);
+          ous.push({
+            name: getFirstValue(m.name) || getFirstValue(m.ou) || dn,
+            ou: getFirstValue(m.ou),
+            dn,
+          });
+        });
+        res.on('end', (result) => {
+          if (result?.status === 0) resolve();
+          else reject(new Error(`LDAP search failed: status ${result?.status}`));
+        });
+        res.on('error', reject);
+      });
+    });
+
+    _connected = true;
+    _lastCheck = Date.now();
+    return ous;
+  } catch (err: any) {
+    _connected = false;
+    _lastError = err.message;
+    throw err;
+  } finally {
+    await unbind(client);
+  }
+}
+
+/**
+ * AddRequest variant that writes the entry DN straight to the wire as raw
+ * UTF-8, bypassing `AddRequest#entry`'s DN.fromString()/toString() round-trip
+ * (which re-escapes non-ASCII names into `\d9\85`-style hex and breaks Arabic
+ * CNs on AD). Attributes are still the standard @ldapjs Attribute instances,
+ * so their Buffer/UTF-8 values are serialized verbatim.
+ */
+class RawAddRequest extends (ldap as any).AddRequest {
+  constructor(options: { object: string; attributes: ldap.Attribute[] }) {
+    super({ attributes: options.attributes });
+    (this as any).rawDN = options.object;
+  }
+
+  _toBer(ber: any): any {
+    ber.startSequence(0x68); // LDAP_REQ_ADD
+    ber.writeString((this as any).rawDN);
+    ber.startSequence();
+    for (const attr of (this as any).attributes) {
+      const attrBer = attr.toBer();
+      ber.appendBuffer(attrBer.buffer);
+    }
+    ber.endSequence();
+    ber.endSequence();
+    return ber;
+  }
+}
+
+/**
+ * Create a new user in Active Directory.
+ * The AddRequest DN + attributes are written to the wire as raw UTF-8 (via
+ * client._send) for the same reason rawModify exists: client.add() re-escapes
+ * non-ASCII DNs and AD rejects them with "No Such Object"/"Invalid DN Syntax".
+ */
+export async function createADUser(input: NewADUserInput): Promise<void> {
+  const cfg = getADConfig();
+  const client = await createClient();
+  try {
+    await bind(client);
+
+    if (await userExists(client, cfg, input.sAMAccountName)) {
+      throw new Error(`User '${input.sAMAccountName}' already exists in Active Directory`);
+    }
+
+    const cn = escapeDNComponent(input.displayName);
+    const dn = `CN=${cn},${input.ou.trim()}`;
+
+    let uac = UAC.NORMAL_ACCOUNT;
+    if (!input.enabled) uac |= UAC.ACCOUNTDISABLE;
+
+    const pwd = Buffer.from(`"${input.password}"`, 'utf16le');
+
+    const attributes: ldap.Attribute[] = [
+      new ldap.Attribute({ type: 'objectClass', values: ['top', 'person', 'organizationalPerson', 'user'] }),
+      new ldap.Attribute({ type: 'cn', values: [input.displayName.trim()] }),
+      new ldap.Attribute({ type: 'givenName', values: [input.firstName.trim()] }),
+      new ldap.Attribute({ type: 'sn', values: [input.lastName.trim()] }),
+      new ldap.Attribute({ type: 'displayName', values: [input.displayName.trim()] }),
+      new ldap.Attribute({ type: 'sAMAccountName', values: [input.sAMAccountName.trim()] }),
+      new ldap.Attribute({ type: 'userPrincipalName', values: [input.userPrincipalName.trim()] }),
+      new ldap.Attribute({ type: 'mail', values: [input.mail.trim()] }),
+      new ldap.Attribute({ type: 'userAccountControl', values: [String(uac)] }),
+      new ldap.Attribute({ type: 'unicodePwd', values: [pwd] }),
+      ...(input.mustChangePassword ? [new ldap.Attribute({ type: 'pwdLastSet', values: ['0'] })] : []),
+    ];
+
+    const optionalAttrs: Array<[string, string | undefined]> = [
+      ['department', input.department],
+      ['title', input.title],
+      ['description', input.description],
+      ['physicalDeliveryOfficeName', input.office],
+      ['telephoneNumber', input.phone],
+      ['employeeID', input.employeeId],
+    ];
+    for (const [type, value] of optionalAttrs) {
+      const v = value?.trim();
+      if (v) attributes.push(new ldap.Attribute({ type, values: [v] }));
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const req = new RawAddRequest({ object: dn, attributes });
+      (client as any)._send(req, [ldap.LDAP_SUCCESS], null, (err: any) => {
+        if (err) reject(new Error(`AD create failed: ${err.message}`));
+        else resolve();
+      });
     });
 
     _connected = true;

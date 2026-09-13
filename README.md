@@ -1,12 +1,12 @@
 # AD Identity Management Portal
 
-A production-ready **Active Directory Identity Management Portal** built with Next.js 16, TypeScript, Prisma ORM, SQLite, and shadcn/ui. Features role-based access control (RBAC) with 3 roles and 13 permissions, JWT authentication, complete audit logging, Civil ID verification for agents, QR code password delivery, and optional real LDAP/LDAPS integration.
+A production-ready **Active Directory Identity Management Portal** built with Next.js 16, TypeScript, Prisma ORM, SQLite, and shadcn/ui. Features role-based access control (RBAC) with 4 roles and 14 permissions, JWT authentication, complete audit logging, Civil ID verification for agents, QR code password delivery, and optional real LDAP/LDAPS integration.
 
 ---
 
 ## Features
 
-- **RBAC** — 3 roles (Administrator, Supervisor, Password Reset Agent) with 13 granular permissions
+- **RBAC** — 4 roles (Superadmin, Administrator, Supervisor, Password Reset Agent) with 14 granular permissions
 - **JWT Authentication** — bcrypt password hashing, 5-failure account lockout (15 min), 8-hour session expiry
 - **AD Operations** — Reset Password, Unlock Account, Enable/Disable Account, Force Password Change
 - **QR Code Password** — Scannable QR code with temporary password, print-ready handout
@@ -189,6 +189,7 @@ The app starts on **http://localhost:3000**.
 
 | Role | Username | Password |
 |------|----------|----------|
+| Superadmin | `superadmin` | `SuperAdmin@123` |
 | Administrator | `admin` | `Admin@123` |
 | Supervisor | `supervisor1` | `Super@123` |
 | Password Reset Agent | `agent1` | `Agent1@123` |
@@ -280,7 +281,7 @@ ad-identity-portal/
 
 | Table | Description |
 |-------|-------------|
-| `roles` | 3 portal roles (Administrator, Supervisor, Password Reset Agent) |
+| `roles` | 4 portal roles (Superadmin, Administrator, Supervisor, Password Reset Agent) |
 | `permissions` | 13 granular permissions |
 | `role_permissions` | Many-to-many role-permission mapping |
 | `users` | Portal users (login accounts with role assignment) |
@@ -292,21 +293,22 @@ ad-identity-portal/
 
 ## RBAC Permissions
 
-| Permission | Administrator | Supervisor | Agent |
-|-----------|:---:|:---:|:---:|
-| `view_dashboard` | ✅ | ✅ | ❌ |
-| `search_users` | ✅ | ✅ | ✅ |
-| `reset_password` | ✅ | ✅ | ✅ |
-| `unlock_account` | ✅ | ✅ | ✅ |
-| `enable_account` | ✅ | ❌ | ❌ |
-| `disable_account` | ✅ | ❌ | ❌ |
-| `force_password_change` | ✅ | ✅ | ❌ |
-| `view_audit_logs` | ✅ | ✅ | ❌ |
-| `export_audit_logs` | ✅ | ✅ | ❌ |
-| `manage_agents` | ✅ | ❌ | ❌ |
-| `manage_roles` | ✅ | ❌ | ❌ |
-| `ad_settings` | ✅ | ❌ | ❌ |
-| `export_civil_ids` | ✅ | ❌ | ❌ |
+| Permission | Superadmin | Administrator | Supervisor | Agent |
+|-----------|:---:|:---:|:---:|:---:|
+| `search_users` | ✅ | ✅ | ✅ | ✅ |
+| `view_user_details` | ✅ | ✅ | ✅ | ❌ |
+| `reset_passwords` | ✅ | ✅ | ✅ | ✅ |
+| `unlock_accounts` | ✅ | ✅ | ✅ | ✅ |
+| `enable_ad_accounts` | ✅ | ✅ | ✅ | ✅ |
+| `disable_ad_accounts` | ✅ | ✅ | ❌ | ✅ |
+| `force_password_change` | ✅ | ✅ | ✅ | ❌ |
+| `view_reports` | ✅ | ✅ | ✅ | ❌ |
+| `view_all_audit_logs` | ✅ | ✅ | ❌ | ❌ |
+| `export_audit_logs` | ✅ | ✅ | ❌ | ❌ |
+| `create_agents` | ✅ | ✅ | ❌ | ❌ |
+| `manage_roles` | ✅ | ✅ | ❌ | ❌ |
+| `view_own_audit_logs` | ✅ | ✅ | ✅ | ✅ |
+| `create_ad_accounts` | ✅ | ❌ | ❌ | ❌ |
 
 ---
 

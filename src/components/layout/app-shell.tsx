@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/auth-store';
 import { api } from '@/lib/api-client';
 import {
   Shield, LayoutDashboard, Search, Users, ScrollText,
-  LogOut, Settings, Menu, X, ChevronDown,
+  LogOut, Settings, Menu, X, ChevronDown, UserPlus,
   Lock, AlertTriangle, Building2, MonitorSmartphone, Wifi, WifiOff, RefreshCw
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -37,7 +37,7 @@ interface ADStatus {
   };
 }
 
-export type Page = 'dashboard' | 'users' | 'agents' | 'audit' | 'settings';
+export type Page = 'dashboard' | 'users' | 'create-user' | 'agents' | 'audit' | 'settings';
 
 interface AppShellProps {
   currentPage: Page;
@@ -48,6 +48,7 @@ interface AppShellProps {
 const NAV_ITEMS: { page: Page; label: string; icon: React.ElementType; permission?: string }[] = [
   { page: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, permission: 'view_reports' },
   { page: 'users', label: 'User Search', icon: Search, permission: 'search_users' },
+  { page: 'create-user', label: 'Create AD User', icon: UserPlus, permission: 'create_ad_accounts' },
   { page: 'agents', label: 'Agent Management', icon: Users, permission: 'create_agents' },
   { page: 'audit', label: 'Audit Logs', icon: ScrollText, permission: 'view_all_audit_logs' },
   { page: 'settings', label: 'AD Settings', icon: Settings, permission: 'manage_roles' },

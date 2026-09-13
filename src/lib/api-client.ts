@@ -56,6 +56,25 @@ export const api = {
   },
   getAdStatus: () =>
     request<{ mode: string; configured: boolean; connected: boolean; error: string | null; lastCheck: number; config: any }>('/api/ad/status'),
+  listOUs: () =>
+    request<{ ous: { name: string; ou: string; dn: string }[]; domain: string }>('/api/ad/ous'),
+  createAdUser: (data: {
+    firstName: string;
+    lastName: string;
+    displayName: string;
+    sAMAccountName: string;
+    email: string;
+    ou: string;
+    department?: string;
+    title?: string;
+    description?: string;
+    office?: string;
+    phone?: string;
+    employeeId?: string;
+    password: string;
+    mustChangePassword: boolean;
+    enabled: boolean;
+  }) => request<{ success: boolean; message: string; newPassword?: string }>('/api/ad/users', { method: 'POST', body: JSON.stringify(data) }),
   testAdConnection: () =>
     request<{ connected: boolean; error?: string; latencyMs?: number; serverInfo?: string }>('/api/ad/test', { method: 'POST' }),
   getVerifications: (username: string) => request<{ verifications: any[]; total: number }>(`/api/users/${username}/verifications`),

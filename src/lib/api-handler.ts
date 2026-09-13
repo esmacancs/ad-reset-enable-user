@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import ExcelJS from 'exceljs';
 import * as adService from '@/lib/ad-service';
+import type { NewADUserInput } from '@/lib/ad-service';
 
 // === CONFIG ===
 const JWT_SECRET = 'ad-portal-secret-key-2024';
@@ -165,6 +166,66 @@ function generateMockADUsers(): ADUser[] {
 }
 
 const MOCK_AD_USERS = generateMockADUsers();
+
+// Mock OUs (used only when AD is not configured)
+const MOCK_OUs = [
+  { name: 'Employees', ou: 'Employees', dn: 'OU=Employees,DC=company,DC=local' },
+  { name: 'Clients', ou: 'Clients', dn: 'OU=Clients,DC=company,DC=local' },
+  { name: 'Service Accounts', ou: 'Service Accounts', dn: 'OU=Service Accounts,DC=company,DC=local' },
+  { name: 'IT', ou: 'IT', dn: 'OU=IT,OU=Employees,DC=company,DC=local' },
+  { name: 'HR', ou: 'HR', dn: 'OU=HR,OU=Employees,DC=company,DC=local' },
+  { name: 'Finance', ou: 'Finance', dn: 'OU=Finance,OU=Employees,DC=company,DC=local' },
+];
+
+/** List AD OUs/containers (real or mock) */
+async function adListOUs(): Promise<{ ous: { name: string; ou: string; dn: string }[]; domain: string }> {
+  if (USE_REAL_AD) {
+    try {
+      return { ous: await adService.listContainerOUs(), domain: adService.getADConfig().domain };
+    } catch (err: any) {
+      console.error('[AD] Real AD OU list failed, falling back to mock:', err.message);
+    }
+  }
+  return { ous: MOCK_OUs, domain: 'company.local' };
+}
+
+/** Create an AD user (real or mock) */
+async function adCreateUser(input: NewADUserInput): Promise<{ success: boolean; message: string; newPassword?: string }> {
+  if (USE_REAL_AD) {
+    try {
+      await adService.createADUser(input);
+      return { success: true, message: `AD account '${input.sAMAccountName}' created successfully.` };
+    } catch (err: any) {
+      return { success: false, message: `AD error: ${err.message}` };
+    }
+  }
+  // Mock fallback
+  const uname = input.sAMAccountName.trim();
+  if (MOCK_AD_USERS.some(u => u.username.toLowerCase() === uname.toLowerCase())) {
+    return { success: false, message: `User '${uname}' already exists.` };
+  }
+  MOCK_AD_USERS.push({
+    displayName: input.displayName,
+    username: uname,
+    email: input.mail,
+    department: input.department || 'Mock Department',
+    title: input.title || 'Specialist',
+    employeeId: input.employeeId || `EMP${String(MOCK_AD_USERS.length + 10001).padStart(6, '0')}`,
+    enabled: input.enabled,
+    locked: false,
+    lastLogon: null,
+    groups: ['Domain Users'],
+    distinguishedName: `CN=${input.displayName},${input.ou}`,
+    phone: input.phone || '',
+    office: input.office || 'Head Office',
+    manager: 'CEO Office',
+    whenCreated: new Date().toISOString(),
+    passwordLastSet: input.mustChangePassword ? null : new Date().toISOString(),
+    accountExpires: null,
+    description: input.description || null,
+  });
+  return { success: true, message: `AD account '${uname}' created successfully.` };
+}
 
 /** Search AD users (real or mock) */
 async function adSearchUsers(query: string, field?: string): Promise<{ users: ADUser[]; total: number }> {
@@ -861,6 +922,94 @@ addRoute('GET', '/civil-id/export', async ({ authHeader, searchParams }) => {
       'Content-Disposition': `attachment; filename="${filename}"`,
     },
   });
+});
+
+// GET /ad/ous — list OUs/containers where users can be created (Superadmin only)
+addRoute('GET', '/ad/ous', async ({ authHeader }) => {
+  const payload = authenticate(authHeader);
+  if (!payload) return error('Unauthorized', 401);
+  if (!hasPermission(payload.permissions, 'create_ad_accounts')) return error('Insufficient permissions', 403);
+
+  const result = await adListOUs();
+  return json(result);
+});
+
+// POST /ad/users — create a new AD account (Superadmin only)
+addRoute('POST', '/ad/users', async ({ body, clientIp, authHeader }) => {
+  const payload = authenticate(authHeader);
+  if (!payload) return error('Unauthorized', 401);
+  if (!hasPermission(payload.permissions, 'create_ad_accounts')) return error('Insufficient permissions', 403);
+
+  const {
+    firstName, lastName, displayName: providedDisplayName, sAMAccountName, email,
+    ou, department, title, description, office, phone, employeeId,
+    mustChangePassword, enabled,
+  } = body as any;
+
+  const fname = (firstName || '').trim();
+  const lname = (lastName || '').trim();
+  const uname = (sAMAccountName || '').trim();
+  const mail = (email || '').trim();
+  const oname = (ou || '').trim();
+  const dName = (providedDisplayName || '').trim() || `${fname} ${lname}`.trim();
+
+  if (!fname || !lname || !uname || !oname) return error('Missing required fields (firstName, lastName, username, OU)', 400);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(uname)) {
+    return error('Username may only contain letters, numbers, dot, dash or underscore and must not start with a special character.', 400);
+  }
+  if (!mail) return error('Email is required', 400);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return error('A valid email address is required', 400);
+
+  let password = ((body.password as string) || '').trim();
+  let autoGenerated = false;
+  if (!password) {
+    password = generateSecurePassword();
+    autoGenerated = true;
+  } else {
+    const invalid = validatePasswordInput(password);
+    if (invalid) return error(invalid, 400);
+  }
+
+  const result = await adCreateUser({
+    firstName: fname,
+    lastName: lname,
+    displayName: dName,
+    sAMAccountName: uname,
+    userPrincipalName: `${uname}@${adService.getADConfig().domain}`,
+    mail,
+    ou: oname,
+    department: department?.trim() || undefined,
+    title: title?.trim() || undefined,
+    description: description?.trim() || undefined,
+    office: office?.trim() || undefined,
+    phone: phone?.trim() || undefined,
+    employeeId: employeeId?.trim() || undefined,
+    password,
+    mustChangePassword: mustChangePassword !== false,
+    enabled: enabled !== false,
+  });
+
+  await db.auditLog.create({
+    data: {
+      agent_username: payload.username,
+      action: 'CREATE_AD_ACCOUNT',
+      target_username: uname,
+      description: result.message,
+      result: result.success ? 'success' : 'failure',
+      agent_ip: clientIp,
+    },
+  });
+  await db.aDOperation.create({
+    data: {
+      operation_type: 'CREATE_AD_ACCOUNT',
+      target_user: uname,
+      requested_by: payload.username,
+      status: result.success ? 'completed' : 'failed',
+    },
+  });
+
+  if (autoGenerated && result.success) return json({ ...result, newPassword: password });
+  return json(result);
 });
 
 // GET /ad/status — AD connection health check (performs a live bind when the cached status is stale)
