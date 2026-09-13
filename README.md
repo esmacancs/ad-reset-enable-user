@@ -9,6 +9,7 @@ A production-ready **Active Directory Identity Management Portal** built with Ne
 - **RBAC** — 4 roles (Superadmin, Administrator, Supervisor, Password Reset Agent) with 14 granular permissions
 - **JWT Authentication** — bcrypt password hashing, 5-failure account lockout (15 min), 8-hour session expiry
 - **AD Operations** — Reset Password, Unlock Account, Enable/Disable Account, Force Password Change
+- **Create AD User** — Superadmin-only: create AD accounts with an OU picker (top-level OUs + Users container), Arabic/Unicode CN support
 - **QR Code Password** — Scannable QR code with temporary password, print-ready handout
 - **Civil ID Verification** — Agents must verify a user's Civil ID before performing any operation
 - **Audit Trail** — Every action logged with timestamp, agent, IP, and result
@@ -98,8 +99,8 @@ npx tsx prisma/seed.ts
 ```
 
 This creates:
-- 3 roles with 13 permissions
-- 5 portal users (admin, 1 supervisor, 3 agents)
+- 4 roles with 14 permissions (incl. Superadmin)
+- 6 portal users (superadmin, admin, 1 supervisor, 3 agents)
 - Sample audit logs and AD operation records
 
 ### 7. Start the Development Server
@@ -171,8 +172,8 @@ bunx tsx prisma/seed.ts
 ```
 
 This creates:
-- 3 roles with 13 permissions
-- 5 portal users (admin, 1 supervisor, 3 agents)
+- 4 roles with 14 permissions (incl. Superadmin)
+- 6 portal users (superadmin, admin, 1 supervisor, 3 agents)
 - Sample audit logs and AD operation records
 
 ### 6. Start the Development Server
@@ -221,6 +222,10 @@ The app starts on **http://localhost:3000**.
 | `AD_SEARCH_BASE` | Search base for user queries | _(falls back to `AD_BASE_DN`)_ |
 | `AD_USER_FILTER` | LDAP filter for user search | `(objectClass=user)` |
 | `AD_PAGE_SIZE` | LDAP paged search size | `100` |
+| `AD_CA_CERT` | Path to the DC's LDAPS CA PEM file (relative paths resolve against the app dir) | _(none — insecure fallback)_ |
+| `AD_TLS_SERVERNAME` | SNI servername for LDAPS handshake (set it to the DC's cert CN) | _(none)_ |
+| `AD_TLS_REJECT_UNAUTHORIZED` | Verify the DC's TLS cert | `true` |
+| `AD_OU_SEARCH_BASE` | Base whose DIRECT children are shown in the Create-User OU dropdown | _(falls back to `AD_BASE_DN`)_ |
 
 > When `AD_BIND_DN` and `AD_BIND_PASSWORD` are empty, the app runs in **Demo Mode** with 200 mock users. No real AD server is required for testing or demos.
 
@@ -282,7 +287,7 @@ ad-identity-portal/
 | Table | Description |
 |-------|-------------|
 | `roles` | 4 portal roles (Superadmin, Administrator, Supervisor, Password Reset Agent) |
-| `permissions` | 13 granular permissions |
+| `permissions` | 14 granular permissions |
 | `role_permissions` | Many-to-many role-permission mapping |
 | `users` | Portal users (login accounts with role assignment) |
 | `audit_logs` | Complete audit trail of every action |
@@ -328,6 +333,22 @@ ad-identity-portal/
 2. **Confirmation** — No Civil ID required, goes straight to confirmation
 3. **Execution** — Same QR code password delivery
 
+### Create AD User (Superadmin Only)
+
+1. Superadmin opens **Create AD User** in the sidebar
+2. Chooses a target **OU** from the dropdown (env `AD_OU_SEARCH_BASE` picks the parent, default = domain root)
+3. Fills in username, display name, and other attributes
+4. Account is created in AD with a random temporary password
+
+> **Why only top-level OUs?** Some production DCs cap LDAP replies at 1000
+> entries and ignore paged searches (`Size Limit Exceeded`). The domain root on
+> `ministry.housing.gov.om` has >1000 OUs, so the dropdown lists only the DIRECT
+> children of the enumeration base (OUs + the default `CN=Users` container) —
+> always safely under the cap. Set `AD_OU_SEARCH_BASE` to a parent OU to list
+> that subtree's direct children instead.
+> The bind account needs **create rights on the target OU/container** for the
+> actual creation to succeed.
+
 ### Civil ID Export (Admin Only)
 
 1. Admin clicks **"Export Civil IDs"** on the User Search page
@@ -359,10 +380,18 @@ ad-identity-portal/
 | GET | `/api/civil-id/export` | Yes | Export Civil ID records as Excel (Admin) |
 | GET | `/api/ad/status` | No | AD connection status |
 | POST | `/api/ad/test` | Yes | Test AD connection (Admin) |
+| GET | `/api/ad/ous` | Yes | List OUs for the Create-User dropdown (Superadmin) |
+| POST | `/api/ad/users` | Yes | Create a new AD account (Superadmin) |
 
 ---
 
 ## Production Deployment
+
+> **Important**: `next.config.ts` builds with `output: "standalone"`. The
+> production artifact is `.next/standalone` and is started with plain
+> **`node server.js`** — **`next start` / `npm run start` does not work** for
+> this build. (The classic internet-server flow is below; the air-gapped flow
+> is what this project actually uses in production.)
 
 ### Build
 
@@ -374,15 +403,15 @@ bun run build
 npm run build
 ```
 
-### Run
+### Run (standalone, no internet needed)
 
 ```bash
-# Linux / macOS
-bun run start
-
-# Windows
-npm run start
+node .next/standalone/server.js
 ```
+
+The standalone folder already contains traced `node_modules`, `public`, and
+the compiled server code. Copy `.next/standalone` to the target machine
+together with `.next/static` and `public`.
 
 ### Deploying to a New Server
 
@@ -393,9 +422,9 @@ npm run start
 3. Run: `bun install`
 4. Create `.env` with your settings (see Environment Variables above)
 5. Run: `mkdir -p db && bun run db:push && bun run db:generate && bunx tsx prisma/seed.ts`
-6. Run: `bun run build && bun run start`
+6. Run: `bun run build && node .next/standalone/server.js`
 
-#### Windows Server
+#### Windows Server (internet available)
 
 1. Copy the entire project directory (e.g. `C:\inetpub\ad-identity-portal`)
 2. Install [Node.js LTS](https://nodejs.org/) if not already installed
@@ -409,9 +438,60 @@ npm run start
    npx prisma generate
    npx tsx prisma/seed.ts
    ```
-7. Run: `npm run build && npm run start`
+7. Run: `npm run build && node .next/standalone/server.js`
 
-> **Windows Tip**: To run as a background service, use [PM2](https://pm2.keymetrics.io/): `npm install -g pm2 && pm2 start npm --name "ad-portal" -- start`
+> **Windows Tip**: To run as a background service, use [PM2](https://pm2.keymetrics.io/): `npm install -g pm2 && pm2 start npm --name "ad-portal" -- start` (or NSSM — see below).
+
+### Air-Gapped Windows Server (no internet — production)
+
+The delivered bundle (`portal-production-bundle-<date>.zip`) is a fully
+self-contained deploy — no `npm install`, no `npx tsx`, no internet on the VM.
+
+1. **Unzip** the bundle to `C:\ADIdentityPortal` (recommended; the path must
+   have **no spaces**, e.g. NOT `C:\Program Files\...`):
+   ```
+   C:\ADIdentityPortal\
+   ├── app\              # standalone build: server.js, .next\, node_modules\
+   │     chain_0.pem     # captured DC LDAPS cert (trust anchor)
+   │     .env            # production config (already filled for you)
+   │     db\custom.db    # SQLite database
+   │     offline-seed\   # pre-compiled seed (no tsx needed)
+   ├── deploy\           # nssm.exe + seed.cmd + install-service.cmd + uninstall-service.cmd
+   └── prisma\schema.prisma
+   ```
+2. **Check `app\.env`** — `DATABASE_URL` is rewritten automatically by
+   `install-service.cmd` to the absolute `file:C:/ADIdentityPortal/app/db/custom.db`
+   (the bundled Prisma client **cannot** resolve relative `file:` paths).
+   Update `AD_BIND_PASSWORD` if the service account password has changed.
+3. **Seed the database** (idempotent — safe to re-run):
+   ```cmd
+   cd C:\ADIdentityPortal\deploy
+   seed.cmd
+   ```
+   Wait for `SEED OK` (superadmin / SuperAdmin@123).
+4. **Run once to verify** (foreground):
+   ```cmd
+   cd C:\ADIdentityPortal\app
+   node server.js
+   ```
+   Open http://localhost:3000 and log in; check **AD Status = connected**.
+5. **Install as a Windows service** (right-click Command Prompt → Run as
+   administrator, from `C:\ADIdentityPortal\deploy`):
+   ```cmd
+   install-service.cmd
+   ```
+   Service **ADIdentityPortal** is created (auto-start, logs to
+   `C:\ProgramData\ADIdentityPortal\logs\portal-service.log`).
+6. **Maintenance**:
+   - Update the portal: replace the `app\` folder contents, then re-run `install-service.cmd`.
+   - Remove the service: `uninstall-service.cmd` (run as admin).
+
+> **LDAPS TLS setup**: `app\chain_0.pem` is the production DC's self-signed
+> LDAPS cert, captured read-only from `mhup-oci-cdc01.ministry.housing.gov.om:636`.
+> `AD_CA_CERT=chain_0.pem` + `AD_TLS_REJECT_UNAUTHORIZED=true` makes the portal
+> verify the DC. If the DC cert changes, re-capture it (e.g.
+> `openssl s_client -connect <dc>:636 -showcerts`) and replace the file.
+> `AD_TLS_SERVERNAME` is set to the cert's CN so SNI matches.
 
 ### Switching from Demo to Live AD
 

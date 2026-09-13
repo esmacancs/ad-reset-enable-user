@@ -728,9 +728,19 @@ function userExists(client: ldap.Client, cfg: ADConfig, username: string): Promi
   });
 }
 
-/** List Organizational Units (containers) where users can be created */
+/**
+ * List Organizational Units (plus the default Users container) where users
+ * can be created.
+ *
+ * Enumerates only the DIRECT children of the enumeration base
+ * (AD_OU_SEARCH_BASE, defaulting to the domain base DN) instead of the whole
+ * subtree: several production DCs cap reply size at 1000 entries and ignore
+ * paged searches, so a full-tree query fails with "Size Limit Exceeded" on
+ * domains with >1000 OUs. Counting one level is always well under the cap.
+ */
 export async function listContainerOUs(): Promise<ADOUEntry[]> {
   const cfg = getADConfig();
+  const ouBase = process.env.AD_OU_SEARCH_BASE || cfg.baseDN;
   const client = await createClient();
   try {
     await bind(client);
@@ -738,18 +748,21 @@ export async function listContainerOUs(): Promise<ADOUEntry[]> {
     const ous: ADOUEntry[] = [];
 
     await new Promise<void>((resolve, reject) => {
-      client.search(cfg.baseDN, {
-        filter: '(objectClass=organizationalUnit)',
-        scope: 'sub',
-        sizeLimit: 500,
-        attributes: ['ou', 'name', 'distinguishedName'],
+      client.search(ouBase, {
+        filter: '(|(objectClass=organizationalUnit)(objectClass=container))',
+        scope: 'one',
+        sizeLimit: 1000,
+        attributes: ['ou', 'name', 'cn', 'distinguishedName'],
       }, (err, res) => {
         if (err) return reject(err);
         res.on('searchEntry', (entry) => {
           const m = attrsToMap(entry.attributes);
           const dn = getFirstValue(m.distinguishedName) || dnToString(entry.dn);
+          const dnUpper = dn.toUpperCase();
+          const isUsersContainer = dnUpper.startsWith('CN=USERS,');
+          if (!dnUpper.startsWith('OU=') && !isUsersContainer) return;
           ous.push({
-            name: getFirstValue(m.name) || getFirstValue(m.ou) || dn,
+            name: getFirstValue(m.name) || getFirstValue(m.ou) || getFirstValue(m.cn) || (isUsersContainer ? 'Users' : dn),
             ou: getFirstValue(m.ou),
             dn,
           });
